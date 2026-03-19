@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-BOT_TOKEN = "tokenhere"
+BOT_TOKEN = "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw"
 
 # Store current working directory
 current_dir = os.getcwd()
