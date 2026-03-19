@@ -83,13 +83,14 @@ async def home_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error changing to Home directory: {str(e)}")
 
 
-async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle incoming shell commands."""
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /run command to execute shell commands."""
     if not is_admin(update):
         return
-    command = update.message.text.strip()
+    # Extract the command after /run
+    command = " ".join(context.args).strip()
     if not command:
-        await update.message.reply_text("Please send a valid command.")
+        await update.message.reply_text("Please provide a command to run. Usage: /run <command>")
         return
 
     try:
@@ -128,8 +129,15 @@ def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cd", cd_command))
     application.add_handler(CommandHandler("home", home_command))
+    application.add_handler(CommandHandler("run", run_command))
+    # Optionally keep a fallback message handler to warn the user
+
+    async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if is_admin(update):
+            await update.message.reply_text("Please use /run <command> to execute shell commands.")
+
     application.add_handler(MessageHandler(
-        filters.TEXT & ~filters.COMMAND, handle_command))
+        filters.TEXT & ~filters.COMMAND, unknown_command))
 
     # Start the bot
     print("Bot is running...")
