@@ -1,6 +1,5 @@
 import os
 import subprocess
-import telegram
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -13,25 +12,41 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-BOT_TOKEN = "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Store current working directory
 current_dir = os.getcwd()
 
+
+def is_admin(update: Update) -> bool:
+    """Check if the user is the admin."""
+    return update.effective_user.id == ADMIN_ID
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Send a welcome message when /start is issued."""
+    if not is_admin(update):
+        return
     await update.message.reply_text(
         "Welcome to the Terminal Bot! Send any shell command to execute it.\n"
         "Use '/cd <path>' to change directories. Current directory: " + current_dir
     )
 
+
 async def cd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /cd command to change directories."""
+    if not is_admin(update):
+        return
     global current_dir
     path = " ".join(context.args).strip()
     if not path:
         await update.message.reply_text("Please specify a directory. Usage: /cd <path>")
         return
+
+    # Expand ~ to user's home directory
+    path = os.path.expanduser(path)
+
     try:
         # Attempt to change directory
         os.chdir(path)
@@ -44,9 +59,11 @@ async def cd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error changing directory: {str(e)}")
 
+
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle incoming shell commands."""
-    global current_dir
+    if not is_admin(update):
+        return
     command = update.message.text.strip()
     if not command:
         await update.message.reply_text("Please send a valid command.")
@@ -74,6 +91,7 @@ async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await update.message.reply_text(f"Error executing command: {str(e)}")
 
+
 def main():
     """Start the bot."""
     if not BOT_TOKEN:
@@ -86,11 +104,13 @@ def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cd", cd_command))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_command))
+    application.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND, handle_command))
 
     # Start the bot
     print("Bot is running...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
+
 
 if __name__ == "__main__":
     main()
