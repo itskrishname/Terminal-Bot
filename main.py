@@ -9,14 +9,22 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+    # Load environment variables
+    load_dotenv()
+except ImportError:
+    pass
 
-# Load environment variables
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Store current working directory
+# Change initial directory to the user's home directory
+try:
+    os.chdir(os.path.expanduser("~"))
+except Exception:
+    pass
 current_dir = os.getcwd()
 
 
@@ -59,6 +67,20 @@ async def cd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Permission denied: {path}")
     except Exception as e:
         await update.message.reply_text(f"Error changing directory: {str(e)}")
+
+
+async def home_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /home command to instantly jump to the home directory."""
+    if not is_admin(update):
+        return
+    global current_dir
+    path = os.path.expanduser("~")
+    try:
+        os.chdir(path)
+        current_dir = os.getcwd()
+        await update.message.reply_text(f"Changed directory to Home: {current_dir}")
+    except Exception as e:
+        await update.message.reply_text(f"Error changing to Home directory: {str(e)}")
 
 
 async def handle_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -105,6 +127,7 @@ def main():
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cd", cd_command))
+    application.add_handler(CommandHandler("home", home_command))
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, handle_command))
 
