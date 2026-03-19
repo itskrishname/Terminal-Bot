@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import subprocess
 from telegram import Update
@@ -12,7 +13,7 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Store current working directory
