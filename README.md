@@ -24,6 +24,9 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/exit` | Turn off interactive mode. | `/exit` |
 | `/alias <name> <cmd>` | Create a shortcut for a long command. | `/alias upd apt-get update` |
 | `/aliases` | List all saved aliases. | `/aliases` |
+| `/upload` | **Reply to a file** (photo/video/doc) with `/upload` to save it to the current directory. | `/upload` |
+| `/download <file>` | Download any file from the server directly to Telegram. | `/download backup.zip` |
+| `/delete <path>` | Delete a file or recursively delete a directory. | `/delete temp_folder` |
 | `/addadmin <id>` | Grant bot access to another Telegram user ID. | `/addadmin 123456789` |
 | `/deladmin <id>` | Revoke bot access from a previously added ID. | `/deladmin 123456789` |
 | `/admins` | List all users currently authorized to use the bot. | `/admins` |

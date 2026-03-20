@@ -7,6 +7,7 @@ import sys
 import psutil
 import logging
 import json
+import shutil
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -33,7 +34,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -348,6 +349,95 @@ async def deladmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"🔴 User ID `{del_admin}`'s admin access has been revoked.", parse_mode='Markdown')
 
 
+async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Upload a file to the server's current directory."""
+    if not is_admin(update):
+        return
+
+    message = update.message
+    if not message.reply_to_message:
+        await message.reply_text("Please reply to a file (document, photo, etc.) with `/upload` to save it.", parse_mode='Markdown')
+        return
+
+    reply_msg = message.reply_to_message
+    file_id = None
+    file_name = "uploaded_file"
+
+    if reply_msg.document:
+        file_id = reply_msg.document.file_id
+        file_name = reply_msg.document.file_name or "uploaded_document"
+    elif reply_msg.photo:
+        file_id = reply_msg.photo[-1].file_id
+        file_name = f"uploaded_photo_{int(time.time())}.jpg"
+    elif reply_msg.video:
+        file_id = reply_msg.video.file_id
+        file_name = reply_msg.video.file_name or f"uploaded_video_{int(time.time())}.mp4"
+    elif reply_msg.audio:
+        file_id = reply_msg.audio.file_id
+        file_name = reply_msg.audio.file_name or f"uploaded_audio_{int(time.time())}.mp3"
+    else:
+        await message.reply_text("Unsupported file type. Please reply to a document, photo, video, or audio file.")
+        return
+
+    status_msg = await message.reply_text(f"Downloading `{file_name}` from Telegram...", parse_mode='Markdown')
+    try:
+        new_file = await context.bot.get_file(file_id)
+        save_path = os.path.join(current_dir, file_name)
+        await new_file.download_to_drive(save_path)
+        await status_msg.edit_text(f"✅ File successfully saved to:\n`{save_path}`", parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error uploading file: {str(e)}")
+
+
+async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Download a file from the server."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: `/download <file_name>`", parse_mode='Markdown')
+        return
+    file_name = " ".join(args)
+    file_path = os.path.join(current_dir, file_name)
+    if not os.path.exists(file_path):
+        await update.message.reply_text(f"❌ File not found: `{file_path}`", parse_mode='Markdown')
+        return
+    if not os.path.isfile(file_path):
+        await update.message.reply_text(f"❌ Target is a directory, not a file: `{file_path}`", parse_mode='Markdown')
+        return
+    status_msg = await update.message.reply_text(f"Uploading `{file_name}` to Telegram...", parse_mode='Markdown')
+    try:
+        with open(file_path, "rb") as f:
+            await context.bot.send_document(chat_id=update.effective_chat.id, document=f)
+        await status_msg.edit_text(f"✅ Successfully sent: `{file_name}`", parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error sending file: {str(e)}")
+
+
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Delete a file or directory from the server."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: `/delete <file_or_dir_name>`", parse_mode='Markdown')
+        return
+    target_name = " ".join(args)
+    target_path = os.path.join(current_dir, target_name)
+    if not os.path.exists(target_path):
+        await update.message.reply_text(f"❌ Target not found: `{target_path}`", parse_mode='Markdown')
+        return
+    try:
+        if os.path.isfile(target_path):
+            os.remove(target_path)
+            await update.message.reply_text(f"🗑️ Deleted file: `{target_path}`", parse_mode='Markdown')
+        elif os.path.isdir(target_path):
+            shutil.rmtree(target_path)
+            await update.message.reply_text(f"🗑️ Deleted directory recursively: `{target_path}`", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error deleting `{target_path}`: {str(e)}", parse_mode='Markdown')
+
+
 async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all authorized admin IDs."""
     if not is_admin(update):
@@ -466,6 +556,9 @@ def main():
             BotCommand("addadmin", "Add extra admin ID"),
             BotCommand("deladmin", "Remove extra admin ID"),
             BotCommand("admins", "List all admins"),
+            BotCommand("upload", "Upload a file (reply to a file)"),
+            BotCommand("download", "Download a file to Telegram"),
+            BotCommand("delete", "Delete a file or folder"),
         ]
         await app.bot.set_my_commands(commands)
 
@@ -478,6 +571,9 @@ def main():
     application.add_handler(CommandHandler("cd", cd_command))
     application.add_handler(CommandHandler("home", home_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("upload", upload_command))
+    application.add_handler(CommandHandler("download", download_command))
+    application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("run", run_command))
     application.add_handler(CommandHandler("bg", bg_command))
