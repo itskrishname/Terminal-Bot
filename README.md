@@ -36,6 +36,10 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/cd <path>` | Change the current working directory. Supports `~` for the home directory. | `/cd /var/www/` |
 | `/home` | Instantly jump back to your user's home directory (`~`). | `/home` |
 | `/stats` | View real-time system resources (CPU, RAM, Disk). | `/stats` |
+| `/sysinfo` | View detailed Server OS, Network IPs, and Uptime. | `/sysinfo` |
+| `/ping <host>` | Ping a remote server or IP to check connectivity. | `/ping google.com` |
+| `/schedule <time> <cmd>`| Run a command automatically on a loop. Time can be `s`, `m`, `h`, or `d`. | `/schedule 1h apt update` |
+| `/unschedule <id>` | Cancel an active scheduled task. | `/unschedule 1` |
 | `/logs` | View the last 50 lines of the bot's internal log file (`bot.log`). | `/logs` |
 | `/restart` | Restart the bot script immediately without stopping the server. | `/restart` |
 

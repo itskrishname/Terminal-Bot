@@ -8,6 +8,10 @@ import psutil
 import logging
 import json
 import shutil
+import platform
+import socket
+import urllib.request
+import datetime
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -43,6 +47,9 @@ current_process = None
 interactive_mode = False
 # Dictionary to store custom aliases
 aliases = {}
+# Dictionary to store active scheduled tasks
+scheduled_tasks = {}
+task_counter = 1
 # Set to store extra authorized admin IDs
 extra_admins = set()
 
@@ -133,6 +140,74 @@ async def home_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Changed directory to Home: {current_dir}")
     except Exception as e:
         await update.message.reply_text(f"Error changing to Home directory: {str(e)}")
+
+
+async def sysinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /sysinfo command to get OS and Network information."""
+    if not is_admin(update):
+        return
+    try:
+        uname = platform.uname()
+        sys_os = f"{uname.system} {uname.release} ({uname.machine})"
+
+        # Calculate uptime
+        boot_time_timestamp = psutil.boot_time()
+        bt = datetime.datetime.fromtimestamp(boot_time_timestamp)
+        now = datetime.datetime.now()
+        uptime = now - bt
+
+        # Get IPs
+        hostname = socket.gethostname()
+        local_ip = socket.gethostbyname(hostname)
+        try:
+            public_ip = urllib.request.urlopen(
+                'https://api.ipify.org', timeout=5).read().decode('utf8')
+        except Exception:
+            public_ip = "Unknown (Timeout)"
+
+        msg = (
+            "🖥️ **System Information**\n\n"
+            f"**OS:** `{sys_os}`\n"
+            f"**Hostname:** `{uname.node}`\n"
+            f"**Python:** `{platform.python_version()}`\n"
+            f"**Uptime:** `{str(uptime).split('.')[0]}` (Since {bt.strftime('%Y-%m-%d %H:%M:%S')})\n"
+            f"**Local IP:** `{local_ip}`\n"
+            f"**Public IP:** `{public_ip}`\n"
+        )
+        await update.message.reply_text(msg, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"Error getting sysinfo: {str(e)}")
+
+
+async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /ping command to test network connection to a host."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: `/ping <host>`\nExample: `/ping google.com`", parse_mode='Markdown')
+        return
+
+    host = args[0]
+    # Check OS to use correct ping argument (-c for Linux/Mac, -n for Windows)
+    param = '-n' if platform.system().lower() == 'windows' else '-c'
+    command = ['ping', param, '4', host]
+
+    status_msg = await update.message.reply_text(f"Pinging `{host}`...", parse_mode='Markdown')
+    try:
+        # Run the command and capture output
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=15)
+        output = result.stdout + result.stderr
+        if not output:
+            output = "Ping command executed with no output."
+        if len(output) > 4000:
+            output = output[:4000] + "\n[Output truncated...]"
+        await status_msg.edit_text(f"📡 **Ping Results for `{host}`:**\n\n```\n{output}\n```", parse_mode='Markdown')
+    except subprocess.TimeoutExpired:
+        await status_msg.edit_text("❌ Ping timed out after 15 seconds.")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error pinging `{host}`: {str(e)}")
 
 
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -518,6 +593,125 @@ async def execute_shell_command(update: Update, command: str):
         await update.message.reply_text(f"Error executing command: {str(e)}")
 
 
+def parse_time(time_str: str) -> int:
+    """Helper to convert time string (e.g., 5m, 1h, 30s) to seconds."""
+    time_str = time_str.lower()
+    try:
+        if time_str.endswith('s'):
+            return int(time_str[:-1])
+        elif time_str.endswith('m'):
+            return int(time_str[:-1]) * 60
+        elif time_str.endswith('h'):
+            return int(time_str[:-1]) * 3600
+        elif time_str.endswith('d'):
+            return int(time_str[:-1]) * 86400
+        else:
+            return int(time_str)
+    except ValueError:
+        return -1
+
+
+async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Schedule a command to run periodically."""
+    if not is_admin(update):
+        return
+    global task_counter
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: `/schedule <time> <command>`\nExample: `/schedule 5m apt-get update`", parse_mode='Markdown')
+        return
+
+    time_interval = parse_time(args[0])
+    if time_interval <= 0:
+        await update.message.reply_text("❌ Invalid time format. Use something like `30s`, `5m`, or `1h`.", parse_mode='Markdown')
+        return
+
+    command = " ".join(args[1:])
+    task_id = task_counter
+    task_counter += 1
+
+    async def scheduled_job():
+        # Let's wait first or execute immediately? Let's execute immediately then wait.
+        while task_id in scheduled_tasks:
+            # We will use the execute_shell_command function, but we need to pass a context
+            # We just send a message to the user independently.
+            try:
+                # Check for alias
+                expanded_command = command
+                first_word = command.split()[0] if command else ""
+                if first_word in aliases:
+                    expanded_command = command.replace(
+                        first_word, aliases[first_word], 1)
+
+                process = subprocess.Popen(
+                    expanded_command,
+                    shell=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=current_dir,
+                    preexec_fn=os.setsid
+                )
+                stdout, stderr = process.communicate(timeout=60)
+                output = stdout + stderr
+                if not output:
+                    output = "(No output)"
+                if len(output) > 4000:
+                    output = output[:4000] + "\n[Output truncated...]"
+
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"⏰ **Scheduled Task #{task_id} Executed** (`{command}`):\n\n```\n{output}\n```",
+                    parse_mode='Markdown'
+                )
+            except Exception as e:
+                await context.bot.send_message(
+                    chat_id=update.effective_chat.id,
+                    text=f"❌ **Error in Scheduled Task #{task_id}**: {str(e)}",
+                    parse_mode='Markdown'
+                )
+
+            await asyncio.sleep(time_interval)
+
+    # Start the background asyncio task
+    task_loop = asyncio.create_task(scheduled_job())
+    scheduled_tasks[task_id] = {
+        "command": command,
+        "interval": time_interval,
+        "task_obj": task_loop
+    }
+
+    await update.message.reply_text(f"✅ **Task Scheduled** (ID: `{task_id}`)\nCommand `{command}` will run every `{args[0]}`.", parse_mode='Markdown')
+
+
+async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Stop a scheduled task."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        if not scheduled_tasks:
+            await update.message.reply_text("No active scheduled tasks.")
+            return
+        msg = "⏱️ **Active Scheduled Tasks:**\n\n"
+        for t_id, t_info in scheduled_tasks.items():
+            msg += f"**ID {t_id}**: `{t_info['command']}` (Interval: {t_info['interval']}s)\n"
+        msg += "\nTo stop a task, use `/unschedule <id>`"
+        await update.message.reply_text(msg, parse_mode='Markdown')
+        return
+
+    try:
+        task_id = int(args[0])
+        if task_id in scheduled_tasks:
+            task_info = scheduled_tasks.pop(task_id)
+            task_info["task_obj"].cancel()
+            await update.message.reply_text(f"🛑 Cancelled Scheduled Task #{task_id} (`{task_info['command']}`)", parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ Task ID `{task_id}` not found.")
+    except ValueError:
+        await update.message.reply_text("Please provide a valid numeric Task ID.")
+
+
 async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /run command to execute shell commands."""
     if not is_admin(update):
@@ -559,6 +753,10 @@ def main():
             BotCommand("upload", "Upload a file (reply to a file)"),
             BotCommand("download", "Download a file to Telegram"),
             BotCommand("delete", "Delete a file or folder"),
+            BotCommand("sysinfo", "Show OS, IP, and Uptime"),
+            BotCommand("ping", "Ping a host"),
+            BotCommand("schedule", "Schedule a repeating task"),
+            BotCommand("unschedule", "Stop a scheduled task"),
         ]
         await app.bot.set_my_commands(commands)
 
@@ -571,6 +769,10 @@ def main():
     application.add_handler(CommandHandler("cd", cd_command))
     application.add_handler(CommandHandler("home", home_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("sysinfo", sysinfo_command))
+    application.add_handler(CommandHandler("ping", ping_command))
+    application.add_handler(CommandHandler("schedule", schedule_command))
+    application.add_handler(CommandHandler("unschedule", unschedule_command))
     application.add_handler(CommandHandler("upload", upload_command))
     application.add_handler(CommandHandler("download", download_command))
     application.add_handler(CommandHandler("delete", delete_command))
