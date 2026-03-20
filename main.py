@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import psutil
+import logging
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -12,6 +13,17 @@ from telegram.ext import (
     filters,
     ContextTypes,
 )
+# Configure logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     # Load environment variables
@@ -182,6 +194,26 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error restarting bot: {str(e)}")
 
 
+async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /logs command to send the last 50 lines of the bot.log file."""
+    if not is_admin(update):
+        return
+    try:
+        with open("bot.log", "r") as file:
+            lines = file.readlines()
+            last_lines = lines[-50:]
+            logs_output = "".join(last_lines)
+            if not logs_output:
+                logs_output = "No logs available."
+            elif len(logs_output) > 4000:
+                logs_output = logs_output[-4000:]
+            await update.message.reply_text(f"Last 50 lines of bot.log:\n```\n{logs_output}\n```", parse_mode='Markdown')
+    except FileNotFoundError:
+        await update.message.reply_text("Log file not found.")
+    except Exception as e:
+        await update.message.reply_text(f"Error reading logs: {str(e)}")
+
+
 async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /run command to execute shell commands."""
     if not is_admin(update):
@@ -247,6 +279,7 @@ def main():
             BotCommand("bg", "Run a command in background (e.g., /bg top)"),
             BotCommand("kill", "Kill the currently running process"),
             BotCommand("stats", "Show system CPU, RAM, and Disk usage"),
+            BotCommand("logs", "Show last 50 lines of bot logs"),
             BotCommand("restart", "Restart the bot script"),
         ]
         await app.bot.set_my_commands(commands)
@@ -260,6 +293,7 @@ def main():
     application.add_handler(CommandHandler("cd", cd_command))
     application.add_handler(CommandHandler("home", home_command))
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("run", run_command))
     application.add_handler(CommandHandler("bg", bg_command))
     application.add_handler(CommandHandler("kill", kill_command))
