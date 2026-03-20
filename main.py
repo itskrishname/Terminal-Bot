@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import time
 import asyncio
 import os
 import subprocess
@@ -31,7 +32,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -122,10 +123,16 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /bg command to execute long-running shell commands in the background."""
+    """Handle /bg command to execute long-running shell commands with live updates."""
     if not is_admin(update):
         return
     global current_process
+
+    # Prevent running multiple bg commands at once to avoid confusion
+    if current_process is not None and current_process.poll() is None:
+        await update.message.reply_text("A process is already running. Please /kill it first or wait for it to finish.")
+        return
+
     command = " ".join(context.args).strip()
     if not command:
         await update.message.reply_text("Please provide a command. Usage: /bg <command>")
@@ -136,30 +143,60 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             command,
             shell=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout for live reading
             text=True,
             cwd=current_dir,
             preexec_fn=os.setsid  # Allow killing process group
         )
-        await update.message.reply_text(f"Started background process PID: {current_process.pid}")
 
-        # Run communication in a separate thread so it doesn't block the bot
-        def wait_for_process():
-            stdout, stderr = current_process.communicate()
-            return stdout, stderr
+        message = await update.message.reply_text(f"🚀 Started background process (PID: {current_process.pid})\nLoading...")
 
-        # Wait asynchronously
-        loop = asyncio.get_running_loop()
-        stdout, stderr = await loop.run_in_executor(None, wait_for_process)
+        async def read_output():
+            output_buffer = ""
+            last_update_time = time.time()
+            loop = asyncio.get_running_loop()
 
-        output = stdout + stderr
-        if not output:
-            output = "Background command finished (no output)."
-        if len(output) > 4000:
-            output = output[:4000] + "\n[Output truncated...]"
+            # Read stdout line by line without blocking the event loop
+            def readline():
+                return current_process.stdout.readline()
 
-        await update.message.reply_text(f"Background Process Finished:\n{output}")
-        current_process = None
+            while True:
+                line = await loop.run_in_executor(None, readline)
+                if not line and current_process.poll() is not None:
+                    break
+                if line:
+                    output_buffer += line
+                    current_time = time.time()
+
+                    # Update message every 3 seconds to avoid rate limit
+                    if current_time - last_update_time >= 3.0:
+                        last_update_time = current_time
+                        display_text = output_buffer
+                        if len(display_text) > 4000:
+                            display_text = display_text[-4000:]
+                        try:
+                            await message.edit_text(f"⏳ Process Running (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
+                        except Exception as e:
+                            logger.error(f"Failed to edit live message: {e}")
+
+            # Final update once the process completes
+            display_text = output_buffer
+            if len(display_text) > 4000:
+                display_text = display_text[-4000:]
+            if not display_text.strip():
+                display_text = "Process finished with no output."
+
+            status = "✅ Process Finished" if current_process.returncode == 0 else "❌ Process Failed/Killed"
+            try:
+                await message.edit_text(f"{status} (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
+            except Exception as e:
+                logger.error(f"Failed to edit final message: {e}")
+
+            global current_process
+            current_process = None
+
+        # Start reading the output in the background so the bot remains responsive
+        asyncio.create_task(read_output())
 
     except Exception as e:
         current_process = None
@@ -171,14 +208,15 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update):
         return
     global current_process
-    if current_process is None:
+    if current_process is None or current_process.poll() is not None:
         await update.message.reply_text("No active process to kill.")
+        current_process = None
         return
     try:
         import signal
         os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
-        current_process = None
-        await update.message.reply_text("The running process has been terminated.")
+        # Give it a tiny bit to actually die, the read loop will handle nullifying current_process
+        await update.message.reply_text(f"The running process (PID: {current_process.pid}) has been sent the kill signal.")
     except Exception as e:
         await update.message.reply_text(f"Error terminating process: {str(e)}")
 
