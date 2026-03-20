@@ -9,6 +9,7 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 *   **Process Management:** Easily `/kill` any runaway or stuck processes directly from the chat.
 *   **Interactive Mode:** Toggle on `/interactive` mode to execute shell commands directly by typing them, without needing the `/run` prefix.
 *   **Command Aliases:** Create persistent shortcuts for long commands (e.g., `/alias up docker-compose up -d`) to save time.
+*   **Multi-Admin Support:** Use `/addadmin`, `/deladmin`, and `/admins` to dynamically allow your friends or colleagues to use the bot. Authorized IDs are saved persistently.
 *   **System Monitoring:** Quickly check your server's RAM, CPU, and Disk Usage with the `/stats` command.
 *   **Persistent Logging:** View the bot's internal logs using the `/logs` command to quickly debug issues without SSHing into the server.
 *   **Auto-Setup Menu:** The bot automatically registers all its commands with the Telegram API so they appear nicely in your chat menu when you type `/`.
@@ -23,6 +24,9 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/exit` | Turn off interactive mode. | `/exit` |
 | `/alias <name> <cmd>` | Create a shortcut for a long command. | `/alias upd apt-get update` |
 | `/aliases` | List all saved aliases. | `/aliases` |
+| `/addadmin <id>` | Grant bot access to another Telegram user ID. | `/addadmin 123456789` |
+| `/deladmin <id>` | Revoke bot access from a previously added ID. | `/deladmin 123456789` |
+| `/admins` | List all users currently authorized to use the bot. | `/admins` |
 | `/run <cmd>` | Execute a standard shell command (wait for it to finish). | `/run ls -la` |
 | `/bg <cmd>` | Execute a long-running shell command in the background with **live output updates**. | `/bg apt-get update` |
 | `/kill` | Instantly kill the currently running `/run` or `/bg` process. | `/kill` |

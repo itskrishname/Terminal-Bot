@@ -6,6 +6,7 @@ import subprocess
 import sys
 import psutil
 import logging
+import json
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -41,6 +42,32 @@ current_process = None
 interactive_mode = False
 # Dictionary to store custom aliases
 aliases = {}
+# Set to store extra authorized admin IDs
+extra_admins = set()
+
+
+def load_extra_admins():
+    """Load extra admin IDs from admins.json."""
+    global extra_admins
+    try:
+        if os.path.exists("admins.json"):
+            with open("admins.json", "r") as f:
+                data = json.load(f)
+                extra_admins = set(data.get("admins", []))
+    except Exception as e:
+        logger.error(f"Error loading extra admins: {e}")
+
+
+def save_extra_admins():
+    """Save extra admin IDs to admins.json."""
+    try:
+        with open("admins.json", "w") as f:
+            json.dump({"admins": list(extra_admins)}, f)
+    except Exception as e:
+        logger.error(f"Error saving extra admins: {e}")
+
+
+load_extra_admins()
 
 # Store current working directory
 # Change initial directory to the user's home directory
@@ -52,8 +79,9 @@ current_dir = os.getcwd()
 
 
 def is_admin(update: Update) -> bool:
-    """Check if the user is the admin."""
-    return update.effective_user.id == ADMIN_ID
+    """Check if the user is an authorized admin."""
+    user_id = update.effective_user.id
+    return user_id == ADMIN_ID or user_id in extra_admins
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -283,6 +311,57 @@ async def aliases_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 
+async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a new admin ID."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Usage: `/addadmin <user_id>` (Must be numeric)", parse_mode='Markdown')
+        return
+    new_admin = int(args[0])
+    if new_admin == ADMIN_ID or new_admin in extra_admins:
+        await update.message.reply_text("User is already an admin.")
+        return
+    extra_admins.add(new_admin)
+    save_extra_admins()
+    await update.message.reply_text(f"✅ User ID `{new_admin}` has been granted admin access.", parse_mode='Markdown')
+
+
+async def deladmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Remove an admin ID."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("Usage: `/deladmin <user_id>` (Must be numeric)", parse_mode='Markdown')
+        return
+    del_admin = int(args[0])
+    if del_admin == ADMIN_ID:
+        await update.message.reply_text("❌ You cannot delete the primary owner (`ADMIN_ID` from `.env`).", parse_mode='Markdown')
+        return
+    if del_admin not in extra_admins:
+        await update.message.reply_text("User is not currently an extra admin.")
+        return
+    extra_admins.remove(del_admin)
+    save_extra_admins()
+    await update.message.reply_text(f"🔴 User ID `{del_admin}`'s admin access has been revoked.", parse_mode='Markdown')
+
+
+async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all authorized admin IDs."""
+    if not is_admin(update):
+        return
+    msg = f"👑 **Primary Admin (Owner):**\n`{ADMIN_ID}`\n\n"
+    msg += "👥 **Extra Admins:**\n"
+    if extra_admins:
+        for admin in extra_admins:
+            msg += f"`{admin}`\n"
+    else:
+        msg += "None"
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+
 async def interactive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Toggle interactive shell mode on."""
     if not is_admin(update):
@@ -384,6 +463,9 @@ def main():
             BotCommand("exit", "Disable interactive mode"),
             BotCommand("alias", "Add a shortcut (e.g., /alias up apt update)"),
             BotCommand("aliases", "List all shortcuts"),
+            BotCommand("addadmin", "Add extra admin ID"),
+            BotCommand("deladmin", "Remove extra admin ID"),
+            BotCommand("admins", "List all admins"),
         ]
         await app.bot.set_my_commands(commands)
 
