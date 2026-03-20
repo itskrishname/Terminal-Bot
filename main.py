@@ -37,6 +37,10 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
 current_process = None
+# Global variable for interactive mode
+interactive_mode = False
+# Dictionary to store custom aliases
+aliases = {}
 
 # Store current working directory
 # Change initial directory to the user's home directory
@@ -252,16 +256,60 @@ async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error reading logs: {str(e)}")
 
 
-async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /run command to execute shell commands."""
+async def alias_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Add a new shortcut alias."""
     if not is_admin(update):
         return
-    global current_process
-    # Extract the command after /run
-    command = " ".join(context.args).strip()
-    if not command:
-        await update.message.reply_text("Please provide a command to run. Usage: /run <command>")
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: `/alias <name> <command>`\nExample: `/alias up apt-get update`", parse_mode='Markdown')
         return
+    alias_name = args[0]
+    alias_cmd = " ".join(args[1:])
+    aliases[alias_name] = alias_cmd
+    await update.message.reply_text(f"✅ Alias saved: `{alias_name}` -> `{alias_cmd}`", parse_mode='Markdown')
+
+
+async def aliases_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List all aliases."""
+    if not is_admin(update):
+        return
+    if not aliases:
+        await update.message.reply_text("No aliases saved.")
+        return
+    msg = "📝 **Saved Aliases:**\n\n"
+    for name, cmd in aliases.items():
+        msg += f"`{name}` -> `{cmd}`\n"
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+
+async def interactive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle interactive shell mode on."""
+    if not is_admin(update):
+        return
+    global interactive_mode
+    interactive_mode = True
+    await update.message.reply_text("🟢 **Interactive Mode Enabled**\nYou no longer need to use `/run`. Every message you send will be executed as a shell command.\nType `/exit` to turn this off.", parse_mode='Markdown')
+
+
+async def exit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Toggle interactive shell mode off."""
+    if not is_admin(update):
+        return
+    global interactive_mode
+    interactive_mode = False
+    await update.message.reply_text("🔴 **Interactive Mode Disabled**\nYou must now use `/run <cmd>` to execute commands.", parse_mode='Markdown')
+
+
+async def execute_shell_command(update: Update, command: str):
+    """Helper function to execute a shell command and reply with output."""
+    global current_process
+
+    # Check for alias
+    first_word = command.split()[0] if command else ""
+    if first_word in aliases:
+        command = command.replace(first_word, aliases[first_word], 1)
+        await update.message.reply_text(f"*(Alias expanded: `{command}`)*", parse_mode='Markdown')
 
     try:
         # Execute shell commands
@@ -293,11 +341,24 @@ async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             current_process = None
             await update.message.reply_text(
                 "Command timed out after 30 seconds and was killed. "
-                "Use /bg <command> for long-running processes."
+                "Use `/bg <command>` for long-running processes.",
+                parse_mode='Markdown'
             )
     except Exception as e:
         current_process = None
         await update.message.reply_text(f"Error executing command: {str(e)}")
+
+
+async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /run command to execute shell commands."""
+    if not is_admin(update):
+        return
+    # Extract the command after /run
+    command = " ".join(context.args).strip()
+    if not command:
+        await update.message.reply_text("Please provide a command to run. Usage: /run <command>")
+        return
+    await execute_shell_command(update, command)
 
 
 def main():
@@ -319,6 +380,10 @@ def main():
             BotCommand("stats", "Show system CPU, RAM, and Disk usage"),
             BotCommand("logs", "Show last 50 lines of bot logs"),
             BotCommand("restart", "Restart the bot script"),
+            BotCommand("interactive", "Toggle interactive shell mode"),
+            BotCommand("exit", "Disable interactive mode"),
+            BotCommand("alias", "Add a shortcut (e.g., /alias up apt update)"),
+            BotCommand("aliases", "List all shortcuts"),
         ]
         await app.bot.set_my_commands(commands)
 
@@ -336,11 +401,19 @@ def main():
     application.add_handler(CommandHandler("bg", bg_command))
     application.add_handler(CommandHandler("kill", kill_command))
     application.add_handler(CommandHandler("restart", restart_command))
-    # Optionally keep a fallback message handler to warn the user
+    application.add_handler(CommandHandler("interactive", interactive_command))
+    application.add_handler(CommandHandler("exit", exit_command))
+    application.add_handler(CommandHandler("alias", alias_command))
+    application.add_handler(CommandHandler("aliases", aliases_command))
 
+    # Message handler for interactive mode or fallback warning
     async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if is_admin(update):
-            await update.message.reply_text("Please use /run <command> to execute shell commands.")
+            if interactive_mode:
+                command = update.message.text.strip()
+                await execute_shell_command(update, command)
+            else:
+                await update.message.reply_text("Please use `/run <command>` to execute shell commands, or type `/interactive` to enable interactive mode.", parse_mode='Markdown')
 
     application.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND, unknown_command))
