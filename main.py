@@ -32,7 +32,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -156,6 +156,7 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await update.message.reply_text(f"🚀 Started background process (PID: {current_process.pid})\nLoading...")
 
         async def read_output():
+            global current_process
             output_buffer = ""
             last_update_time = time.time()
             loop = asyncio.get_running_loop()
@@ -196,7 +197,6 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception as e:
                 logger.error(f"Failed to edit final message: {e}")
 
-            global current_process
             current_process = None
 
         # Start reading the output in the background so the bot remains responsive
