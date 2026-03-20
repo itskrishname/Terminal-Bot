@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+import asyncio
 import os
 import subprocess
+import sys
+import psutil
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -16,8 +19,11 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
+
+# Global variable to store the currently running process (for /kill)
+current_process = None
 
 # Store current working directory
 # Change initial directory to the user's home directory
@@ -83,10 +89,104 @@ async def home_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error changing to Home directory: {str(e)}")
 
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /stats command to check system resources."""
+    if not is_admin(update):
+        return
+    try:
+        cpu_usage = psutil.cpu_percent(interval=1)
+        memory = psutil.virtual_memory()
+        disk = psutil.disk_usage('/')
+
+        stats_message = (
+            "📊 *System Stats*\n\n"
+            f"💻 *CPU Usage:* {cpu_usage}%\n"
+            f"🧠 *RAM Usage:* {memory.percent}% ({memory.used // (1024**2)}MB / {memory.total // (1024**2)}MB)\n"
+            f"💾 *Disk Usage:* {disk.percent}% ({disk.used // (1024**3)}GB / {disk.total // (1024**3)}GB)"
+        )
+        await update.message.reply_text(stats_message, parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"Error getting stats: {str(e)}")
+
+
+async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /bg command to execute long-running shell commands in the background."""
+    if not is_admin(update):
+        return
+    global current_process
+    command = " ".join(context.args).strip()
+    if not command:
+        await update.message.reply_text("Please provide a command. Usage: /bg <command>")
+        return
+
+    try:
+        current_process = subprocess.Popen(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=current_dir,
+            preexec_fn=os.setsid  # Allow killing process group
+        )
+        await update.message.reply_text(f"Started background process PID: {current_process.pid}")
+
+        # Run communication in a separate thread so it doesn't block the bot
+        def wait_for_process():
+            stdout, stderr = current_process.communicate()
+            return stdout, stderr
+
+        # Wait asynchronously
+        loop = asyncio.get_running_loop()
+        stdout, stderr = await loop.run_in_executor(None, wait_for_process)
+
+        output = stdout + stderr
+        if not output:
+            output = "Background command finished (no output)."
+        if len(output) > 4000:
+            output = output[:4000] + "\n[Output truncated...]"
+
+        await update.message.reply_text(f"Background Process Finished:\n{output}")
+        current_process = None
+
+    except Exception as e:
+        current_process = None
+        await update.message.reply_text(f"Error executing background command: {str(e)}")
+
+
+async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /kill command to terminate the running process."""
+    if not is_admin(update):
+        return
+    global current_process
+    if current_process is None:
+        await update.message.reply_text("No active process to kill.")
+        return
+    try:
+        import signal
+        os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
+        current_process = None
+        await update.message.reply_text("The running process has been terminated.")
+    except Exception as e:
+        await update.message.reply_text(f"Error terminating process: {str(e)}")
+
+
+async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /restart command to restart the bot."""
+    if not is_admin(update):
+        return
+    await update.message.reply_text("Restarting bot...")
+    try:
+        os.execv(sys.executable, ['python3'] + sys.argv)
+    except Exception as e:
+        await update.message.reply_text(f"Error restarting bot: {str(e)}")
+
+
 async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /run command to execute shell commands."""
     if not is_admin(update):
         return
+    global current_process
     # Extract the command after /run
     command = " ".join(context.args).strip()
     if not command:
@@ -95,24 +195,38 @@ async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Execute shell commands
-        result = subprocess.run(
+        current_process = subprocess.Popen(
             command,
             shell=True,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=current_dir,
-            timeout=30  # Prevent hanging on long-running commands
+            preexec_fn=os.setsid
         )
-        output = result.stdout + result.stderr
-        if not output:
-            output = "Command executed (no output)."
-        # Telegram messages have a 4096-character limit
-        if len(output) > 4000:
-            output = output[:4000] + "\n[Output truncated...]"
-        await update.message.reply_text(output or "No output.")
-    except subprocess.TimeoutExpired:
-        await update.message.reply_text("Command timed out after 30 seconds.")
+        try:
+            # Wait for up to 30 seconds
+            stdout, stderr = current_process.communicate(timeout=30)
+            output = stdout + stderr
+            if not output:
+                output = "Command executed (no output)."
+            # Telegram messages have a 4096-character limit
+            if len(output) > 4000:
+                output = output[:4000] + "\n[Output truncated...]"
+            await update.message.reply_text(output or "No output.")
+            current_process = None
+        except subprocess.TimeoutExpired:
+            # Don't kill it automatically, let the user know it's still running
+            # Or if it's /run, it's better to kill it so they can use /bg instead
+            import signal
+            os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
+            current_process = None
+            await update.message.reply_text(
+                "Command timed out after 30 seconds and was killed. "
+                "Use /bg <command> for long-running processes."
+            )
     except Exception as e:
+        current_process = None
         await update.message.reply_text(f"Error executing command: {str(e)}")
 
 
@@ -122,14 +236,34 @@ def main():
         print("Error: BOT_TOKEN must be set in .env file.")
         return
 
+    # Setup bot commands menu
+    async def post_init(app: Application):
+        from telegram import BotCommand
+        commands = [
+            BotCommand("start", "Start the bot"),
+            BotCommand("cd", "Change directory (e.g., /cd <path>)"),
+            BotCommand("home", "Go to home directory"),
+            BotCommand("run", "Run a shell command (e.g., /run ls)"),
+            BotCommand("bg", "Run a command in background (e.g., /bg top)"),
+            BotCommand("kill", "Kill the currently running process"),
+            BotCommand("stats", "Show system CPU, RAM, and Disk usage"),
+            BotCommand("restart", "Restart the bot script"),
+        ]
+        await app.bot.set_my_commands(commands)
+
     # Create the Application
-    application = Application.builder().token(BOT_TOKEN).build()
+    application = Application.builder().token(
+        BOT_TOKEN).post_init(post_init).build()
 
     # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("cd", cd_command))
     application.add_handler(CommandHandler("home", home_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("run", run_command))
+    application.add_handler(CommandHandler("bg", bg_command))
+    application.add_handler(CommandHandler("kill", kill_command))
+    application.add_handler(CommandHandler("restart", restart_command))
     # Optionally keep a fallback message handler to warn the user
 
     async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
