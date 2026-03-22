@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import zipfile
 import time
 import asyncio
 import os
@@ -38,7 +39,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -438,20 +439,27 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_id = None
     file_name = "uploaded_file"
 
+    # Check all possible attachments
     if reply_msg.document:
         file_id = reply_msg.document.file_id
-        file_name = reply_msg.document.file_name or "uploaded_document"
-    elif reply_msg.photo:
-        file_id = reply_msg.photo[-1].file_id
-        file_name = f"uploaded_photo_{int(time.time())}.jpg"
-    elif reply_msg.video:
-        file_id = reply_msg.video.file_id
-        file_name = reply_msg.video.file_name or f"uploaded_video_{int(time.time())}.mp4"
+        file_name = reply_msg.document.file_name or "uploaded_file.bin"
     elif reply_msg.audio:
         file_id = reply_msg.audio.file_id
         file_name = reply_msg.audio.file_name or f"uploaded_audio_{int(time.time())}.mp3"
+    elif reply_msg.video:
+        file_id = reply_msg.video.file_id
+        file_name = reply_msg.video.file_name or f"uploaded_video_{int(time.time())}.mp4"
+    elif reply_msg.animation:
+        file_id = reply_msg.animation.file_id
+        file_name = reply_msg.animation.file_name or f"uploaded_animation_{int(time.time())}.mp4"
+    elif reply_msg.voice:
+        file_id = reply_msg.voice.file_id
+        file_name = f"uploaded_voice_{int(time.time())}.ogg"
+    elif reply_msg.photo:
+        file_id = reply_msg.photo[-1].file_id
+        file_name = f"uploaded_photo_{int(time.time())}.jpg"
     else:
-        await message.reply_text("Unsupported file type. Please reply to a document, photo, video, or audio file.")
+        await message.reply_text("Unsupported file type. Please reply to a document (.zip, .txt, etc), photo, video, or audio file.")
         return
 
     status_msg = await message.reply_text(f"Downloading `{file_name}` from Telegram...", parse_mode='Markdown')
@@ -475,16 +483,36 @@ async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_name = " ".join(args)
     file_path = os.path.join(current_dir, file_name)
     if not os.path.exists(file_path):
-        await update.message.reply_text(f"❌ File not found: `{file_path}`", parse_mode='Markdown')
+        await update.message.reply_text(f"❌ Target not found: `{file_path}`", parse_mode='Markdown')
         return
-    if not os.path.isfile(file_path):
-        await update.message.reply_text(f"❌ Target is a directory, not a file: `{file_path}`", parse_mode='Markdown')
-        return
-    status_msg = await update.message.reply_text(f"Uploading `{file_name}` to Telegram...", parse_mode='Markdown')
+
+    # If the user targets a directory, zip it automatically
+    is_dir = os.path.isdir(file_path)
+    send_path = file_path
+
+    if is_dir:
+        status_msg = await update.message.reply_text(f"🗜️ Target is a directory. Zipping `{file_name}`...", parse_mode='Markdown')
+        try:
+            zip_path = file_path + ".zip"
+            shutil.make_archive(file_path, 'zip', file_path)
+            send_path = zip_path
+            file_name += ".zip"
+        except Exception as e:
+            await status_msg.edit_text(f"❌ Error zipping directory: {str(e)}")
+            return
+    else:
+        status_msg = await update.message.reply_text(f"Uploading `{file_name}` to Telegram...", parse_mode='Markdown')
+
     try:
-        with open(file_path, "rb") as f:
-            await context.bot.send_document(chat_id=update.effective_chat.id, document=f)
+        with open(send_path, "rb") as f:
+            # Tell telegram to treat it as a document (works for zip, txt, bin, etc)
+            await context.bot.send_document(chat_id=update.effective_chat.id, document=f, filename=file_name)
         await status_msg.edit_text(f"✅ Successfully sent: `{file_name}`", parse_mode='Markdown')
+
+        # Cleanup automatically created zip file
+        if is_dir and os.path.exists(send_path):
+            os.remove(send_path)
+
     except Exception as e:
         await status_msg.edit_text(f"❌ Error sending file: {str(e)}")
 
@@ -511,6 +539,59 @@ async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"🗑️ Deleted directory recursively: `{target_path}`", parse_mode='Markdown')
     except Exception as e:
         await update.message.reply_text(f"❌ Error deleting `{target_path}`: {str(e)}", parse_mode='Markdown')
+
+
+async def zip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Zip a file or folder on the server."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: `/zip <file_or_folder>`", parse_mode='Markdown')
+        return
+    target_name = " ".join(args)
+    target_path = os.path.join(current_dir, target_name)
+    if not os.path.exists(target_path):
+        await update.message.reply_text(f"❌ Target not found: `{target_path}`", parse_mode='Markdown')
+        return
+
+    status_msg = await update.message.reply_text(f"🗜️ Zipping `{target_name}`...", parse_mode='Markdown')
+    try:
+        if os.path.isdir(target_path):
+            shutil.make_archive(target_path, 'zip', target_path)
+            await status_msg.edit_text(f"✅ Directory Zipped: `{target_name}.zip`", parse_mode='Markdown')
+        else:
+            with zipfile.ZipFile(f"{target_path}.zip", 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipf.write(target_path, os.path.basename(target_path))
+            await status_msg.edit_text(f"✅ File Zipped: `{target_name}.zip`", parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error zipping: {str(e)}")
+
+
+async def unzip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Unzip a file on the server."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("Usage: `/unzip <file.zip>`", parse_mode='Markdown')
+        return
+    target_name = " ".join(args)
+    target_path = os.path.join(current_dir, target_name)
+    if not os.path.exists(target_path):
+        await update.message.reply_text(f"❌ Zip file not found: `{target_path}`", parse_mode='Markdown')
+        return
+    if not target_name.endswith('.zip'):
+        await update.message.reply_text("❌ Target does not appear to be a `.zip` file.", parse_mode='Markdown')
+        return
+
+    extract_folder = target_path[:-4]  # Remove .zip
+    status_msg = await update.message.reply_text(f"📂 Extracting `{target_name}`...", parse_mode='Markdown')
+    try:
+        shutil.unpack_archive(target_path, extract_folder)
+        await status_msg.edit_text(f"✅ Unzipped successfully into:\n`{extract_folder}`", parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error extracting zip: {str(e)}")
 
 
 async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -753,6 +834,8 @@ def main():
             BotCommand("upload", "Upload a file (reply to a file)"),
             BotCommand("download", "Download a file to Telegram"),
             BotCommand("delete", "Delete a file or folder"),
+            BotCommand("zip", "Zip a file or folder"),
+            BotCommand("unzip", "Unzip a .zip file"),
             BotCommand("sysinfo", "Show OS, IP, and Uptime"),
             BotCommand("ping", "Ping a host"),
             BotCommand("schedule", "Schedule a repeating task"),
@@ -776,6 +859,8 @@ def main():
     application.add_handler(CommandHandler("upload", upload_command))
     application.add_handler(CommandHandler("download", download_command))
     application.add_handler(CommandHandler("delete", delete_command))
+    application.add_handler(CommandHandler("zip", zip_command))
+    application.add_handler(CommandHandler("unzip", unzip_command))
     application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("run", run_command))
     application.add_handler(CommandHandler("bg", bg_command))

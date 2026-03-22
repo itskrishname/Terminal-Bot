@@ -25,8 +25,10 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/alias <name> <cmd>` | Create a shortcut for a long command. | `/alias upd apt-get update` |
 | `/aliases` | List all saved aliases. | `/aliases` |
 | `/upload` | **Reply to a file** (photo/video/doc) with `/upload` to save it to the current directory. | `/upload` |
-| `/download <file>` | Download any file from the server directly to Telegram. | `/download backup.zip` |
+| `/download <file>` | Download any file from the server directly to Telegram. Can auto-zip folders! | `/download backup.zip` |
 | `/delete <path>` | Delete a file or recursively delete a directory. | `/delete temp_folder` |
+| `/zip <path>` | Create a .zip archive of any file or folder on the server. | `/zip my_folder` |
+| `/unzip <file.zip>` | Extract a .zip archive into a folder of the same name. | `/unzip data.zip` |
 | `/addadmin <id>` | Grant bot access to another Telegram user ID. | `/addadmin 123456789` |
 | `/deladmin <id>` | Revoke bot access from a previously added ID. | `/deladmin 123456789` |
 | `/admins` | List all users currently authorized to use the bot. | `/admins` |
