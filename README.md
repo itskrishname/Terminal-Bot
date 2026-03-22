@@ -44,6 +44,7 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/unschedule <id>` | Cancel an active scheduled task. | `/unschedule 1` |
 | `/logs` | View the last 50 lines of the bot's internal log file (`bot.log`). | `/logs` |
 | `/restart` | Restart the bot script immediately without stopping the server. | `/restart` |
+| `/update` | Pull the latest code updates from GitHub and auto-restart. | `/update` |
 
 ---
 

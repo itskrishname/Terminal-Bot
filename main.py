@@ -341,6 +341,29 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error restarting bot: {str(e)}")
 
 
+async def update_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /update command to pull latest code from Git and restart."""
+    if not is_admin(update):
+        return
+    status_msg = await update.message.reply_text("🔄 Pulling latest updates from GitHub...", parse_mode='Markdown')
+    try:
+        result = subprocess.run(
+            ["git", "pull"], capture_output=True, text=True, timeout=15)
+        output = result.stdout + result.stderr
+
+        if "Already up to date." in output:
+            await status_msg.edit_text("✅ Bot is already up to date.")
+        else:
+            await status_msg.edit_text(f"✅ Updates Pulled:\n```\n{output}\n```\nRestarting bot to apply changes...", parse_mode='Markdown')
+            # Wait a tiny bit so the message sends, then restart
+            await asyncio.sleep(1)
+            os.execv(sys.executable, ['python3'] + sys.argv)
+    except subprocess.TimeoutExpired:
+        await status_msg.edit_text("❌ `git pull` timed out.", parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error updating bot: {str(e)}")
+
+
 async def logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /logs command to send the last 50 lines of the bot.log file."""
     if not is_admin(update):
@@ -840,6 +863,7 @@ def main():
             BotCommand("ping", "Ping a host"),
             BotCommand("schedule", "Schedule a repeating task"),
             BotCommand("unschedule", "Stop a scheduled task"),
+            BotCommand("update", "Git pull and restart bot"),
         ]
         await app.bot.set_my_commands(commands)
 
@@ -866,6 +890,7 @@ def main():
     application.add_handler(CommandHandler("bg", bg_command))
     application.add_handler(CommandHandler("kill", kill_command))
     application.add_handler(CommandHandler("restart", restart_command))
+    application.add_handler(CommandHandler("update", update_bot_command))
     application.add_handler(CommandHandler("interactive", interactive_command))
     application.add_handler(CommandHandler("exit", exit_command))
     application.add_handler(CommandHandler("alias", alias_command))
