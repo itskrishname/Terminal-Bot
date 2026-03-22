@@ -665,6 +665,38 @@ async def unzip_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(f"❌ Error extracting zip: {str(e)}")
 
 
+async def txt_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Create a text file with the specified content on the server."""
+    if not is_admin(update):
+        return
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text("Usage: `/txt <filename> <content>`\nExample: `/txt script.py print('Hello')`", parse_mode='Markdown')
+        return
+
+    file_name = args[0]
+    # The rest of the message after the filename is the content
+    # To preserve formatting, we can extract from the original message text
+    # command structure: /txt filename content...
+    command_text = update.message.text
+    # Split by the first two spaces (or use maxsplit=2)
+    # /txt filename content goes here...
+    parts = command_text.split(None, 2)
+    if len(parts) < 3:
+        await update.message.reply_text("Please provide content for the file.")
+        return
+
+    content = parts[2]
+    file_path = os.path.join(current_dir, file_name)
+
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        await update.message.reply_text(f"✅ File successfully saved to server:\n`{file_path}`", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error creating file: {str(e)}")
+
+
 async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """List all authorized admin IDs."""
     if not is_admin(update):
@@ -953,6 +985,7 @@ def main():
             BotCommand("delete", "Delete a file or folder"),
             BotCommand("zip", "Zip a file or folder"),
             BotCommand("unzip", "Unzip a .zip file"),
+            BotCommand("txt", "Create a new text file"),
             BotCommand("sysinfo", "Show OS, IP, and Uptime"),
             BotCommand("speedtest", "Test server internet speed"),
             BotCommand("ping", "Ping a host"),
@@ -981,6 +1014,7 @@ def main():
     application.add_handler(CommandHandler("delete", delete_command))
     application.add_handler(CommandHandler("zip", zip_command))
     application.add_handler(CommandHandler("unzip", unzip_command))
+    application.add_handler(CommandHandler("txt", txt_command))
     application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("run", run_command))
     application.add_handler(CommandHandler("bg", bg_command))

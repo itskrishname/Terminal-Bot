@@ -29,6 +29,7 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/delete <path>` | Delete a file or recursively delete a directory. | `/delete temp_folder` |
 | `/zip <path>` | Create a .zip archive of any file or folder on the server. | `/zip my_folder` |
 | `/unzip <file.zip>` | Extract a .zip archive into a folder of the same name. | `/unzip data.zip` |
+| `/txt <filename> <content>` | Create a new file directly on the server with your typed content. | `/txt test.py print('hi')` |
 | `/addadmin <id>` | Grant bot access to another Telegram user ID. | `/addadmin 123456789` |
 | `/deladmin <id>` | Revoke bot access from a previously added ID. | `/deladmin 123456789` |
 | `/admins` | List all users currently authorized to use the bot. | `/admins` |
