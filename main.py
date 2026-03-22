@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import speedtest
 import zipfile
 import time
 import asyncio
@@ -184,6 +185,38 @@ async def sysinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error getting sysinfo: {str(e)}")
 
 
+async def speedtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /speedtest command to test server network speed."""
+    if not is_admin(update):
+        return
+    status_msg = await update.message.reply_text("🚀 Testing Server Internet Speed (This may take a minute)...\n\n1️⃣ Testing Ping...", parse_mode='Markdown')
+    try:
+        def run_test():
+            st = speedtest.Speedtest()
+            st.get_best_server()
+            return st
+
+        loop = asyncio.get_running_loop()
+        st = await loop.run_in_executor(None, run_test)
+
+        await status_msg.edit_text(f"🚀 Testing Server Internet Speed...\n\n✅ Ping: `{st.results.ping} ms`\n2️⃣ Testing Download...", parse_mode='Markdown')
+        download = await loop.run_in_executor(None, st.download)
+
+        await status_msg.edit_text(f"🚀 Testing Server Internet Speed...\n\n✅ Ping: `{st.results.ping} ms`\n✅ Download: `{download / 1024 / 1024:.2f} Mbps`\n3️⃣ Testing Upload...", parse_mode='Markdown')
+        upload = await loop.run_in_executor(None, st.upload)
+
+        final_msg = (
+            "🚀 **Speedtest Results**\n\n"
+            f"**Ping:** `{st.results.ping} ms`\n"
+            f"**Download:** `{download / 1024 / 1024:.2f} Mbps`\n"
+            f"**Upload:** `{upload / 1024 / 1024:.2f} Mbps`\n"
+            f"**Server:** `{st.results.server['sponsor']} ({st.results.server['name']})`"
+        )
+        await status_msg.edit_text(final_msg, parse_mode='Markdown')
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Error testing speed: {str(e)}")
+
+
 async def ping_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /ping command to test network connection to a host."""
     if not is_admin(update):
@@ -252,12 +285,15 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
+        # Prefix with stdbuf -oL -eL to force line buffering for most standard commands
+        buffered_command = f"stdbuf -oL -eL {command}"
         current_process = subprocess.Popen(
-            command,
+            buffered_command,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,  # Merge stderr into stdout for live reading
             text=True,
+            bufsize=1,  # Line buffered
             cwd=current_dir,
             preexec_fn=os.setsid  # Allow killing process group
         )
@@ -872,6 +908,7 @@ def main():
             BotCommand("zip", "Zip a file or folder"),
             BotCommand("unzip", "Unzip a .zip file"),
             BotCommand("sysinfo", "Show OS, IP, and Uptime"),
+            BotCommand("speedtest", "Test server internet speed"),
             BotCommand("ping", "Ping a host"),
             BotCommand("schedule", "Schedule a repeating task"),
             BotCommand("unschedule", "Stop a scheduled task"),
@@ -889,6 +926,7 @@ def main():
     application.add_handler(CommandHandler("home", home_command))
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(CommandHandler("sysinfo", sysinfo_command))
+    application.add_handler(CommandHandler("speedtest", speedtest_command))
     application.add_handler(CommandHandler("ping", ping_command))
     application.add_handler(CommandHandler("schedule", schedule_command))
     application.add_handler(CommandHandler("unschedule", unschedule_command))

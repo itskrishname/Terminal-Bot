@@ -39,6 +39,7 @@ A highly secure, feature-rich Telegram Bot that allows you to execute shell comm
 | `/home` | Instantly jump back to your user's home directory (`~`). | `/home` |
 | `/stats` | View real-time system resources (CPU, RAM, Disk). | `/stats` |
 | `/sysinfo` | View detailed Server OS, Network IPs, and Uptime. | `/sysinfo` |
+| `/speedtest` | Test the server's download/upload speed. | `/speedtest` |
 | `/ping <host>` | Ping a remote server or IP to check connectivity. | `/ping google.com` |
 | `/schedule <time> <cmd>`| Run a command automatically on a loop. Time can be `s`, `m`, `h`, or `d`. | `/schedule 1h apt update` |
 | `/unschedule <id>` | Cancel an active scheduled task. | `/unschedule 1` |
