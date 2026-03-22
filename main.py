@@ -698,8 +698,13 @@ async def exit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def execute_shell_command(update: Update, command: str):
-    """Helper function to execute a shell command and reply with output."""
+    """Helper function to execute a shell command with live updates and a 60s timeout."""
     global current_process
+
+    # Prevent running multiple commands at once to avoid confusion
+    if current_process is not None and current_process.poll() is None:
+        await update.message.reply_text("A process is already running. Please wait or use `/kill`.", parse_mode='Markdown')
+        return
 
     # Check for alias
     first_word = command.split()[0] if command else ""
@@ -708,38 +713,79 @@ async def execute_shell_command(update: Update, command: str):
         await update.message.reply_text(f"*(Alias expanded: `{command}`)*", parse_mode='Markdown')
 
     try:
-        # Execute shell commands
+        buffered_command = f"stdbuf -oL -eL {command}"
         current_process = subprocess.Popen(
-            command,
+            buffered_command,
             shell=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
             cwd=current_dir,
             preexec_fn=os.setsid
         )
+
+        message = await update.message.reply_text(f"⏳ Executing: `{command}`\nLoading...", parse_mode='Markdown')
+
+        output_buffer = ""
+        last_update_time = time.time()
+        start_time = time.time()
+        loop = asyncio.get_running_loop()
+
+        def readline():
+            return current_process.stdout.readline()
+
+        while True:
+            # Check for timeout (60 seconds)
+            if time.time() - start_time > 60:
+                import signal
+                os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
+                display_text = output_buffer
+                if len(display_text) > 4000:
+                    display_text = display_text[-4000:]
+                try:
+                    await message.edit_text(f"❌ **Timeout (60s)**. Process killed.\nUse `/bg` for longer tasks.\n\n```\n{display_text}\n```", parse_mode='Markdown')
+                except Exception:
+                    pass
+                current_process = None
+                return
+
+            # Read line asynchronously
+            line = await loop.run_in_executor(None, readline)
+
+            if not line and current_process.poll() is not None:
+                break
+
+            if line:
+                output_buffer += line
+                current_time = time.time()
+
+                # Update every 3 seconds
+                if current_time - last_update_time >= 3.0:
+                    last_update_time = current_time
+                    display_text = output_buffer
+                    if len(display_text) > 4000:
+                        display_text = display_text[-4000:]
+                    try:
+                        await message.edit_text(f"⏳ Executing (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
+                    except Exception as e:
+                        logger.error(f"Failed to edit live message: {e}")
+
+        # Final update
+        display_text = output_buffer
+        if len(display_text) > 4000:
+            display_text = display_text[-4000:]
+        if not display_text.strip():
+            display_text = "Command executed (no output)."
+
+        status = "✅ Finished" if current_process.returncode == 0 else "❌ Failed"
         try:
-            # Wait for up to 30 seconds
-            stdout, stderr = current_process.communicate(timeout=30)
-            output = stdout + stderr
-            if not output:
-                output = "Command executed (no output)."
-            # Telegram messages have a 4096-character limit
-            if len(output) > 4000:
-                output = output[:4000] + "\n[Output truncated...]"
-            await update.message.reply_text(output or "No output.")
-            current_process = None
-        except subprocess.TimeoutExpired:
-            # Don't kill it automatically, let the user know it's still running
-            # Or if it's /run, it's better to kill it so they can use /bg instead
-            import signal
-            os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
-            current_process = None
-            await update.message.reply_text(
-                "Command timed out after 30 seconds and was killed. "
-                "Use `/bg <command>` for long-running processes.",
-                parse_mode='Markdown'
-            )
+            await message.edit_text(f"{status}\n\n```\n{display_text}\n```", parse_mode='Markdown')
+        except Exception as e:
+            logger.error(f"Failed to edit final message: {e}")
+
+        current_process = None
+
     except Exception as e:
         current_process = None
         await update.message.reply_text(f"Error executing command: {str(e)}")
