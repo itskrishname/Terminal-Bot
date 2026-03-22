@@ -7,12 +7,12 @@ import subprocess
 import sys
 import psutil
 import logging
-import json
 import shutil
 import platform
 import socket
 import urllib.request
 import datetime
+from pymongo import MongoClient
 from telegram import Update
 from telegram.ext import (
     Application,
@@ -51,29 +51,33 @@ aliases = {}
 # Dictionary to store active scheduled tasks
 scheduled_tasks = {}
 task_counter = 1
+# MongoDB Setup
+MONGO_URI = os.getenv(
+    "MONGO_URI", "mongodb+srv://raj:krishna@cluster0.eq8xrjs.mongodb.net/")
+try:
+    mongo_client = MongoClient(MONGO_URI)
+    db = mongo_client["terminal_bot"]
+    admins_collection = db["admins"]
+except Exception as e:
+    logger.error(f"Error connecting to MongoDB: {e}")
+    admins_collection = None
+
 # Set to store extra authorized admin IDs
 extra_admins = set()
 
 
 def load_extra_admins():
-    """Load extra admin IDs from admins.json."""
-    global extra_admins
+    """Load extra admin IDs from MongoDB."""
+    if admins_collection is None:
+        return
     try:
-        if os.path.exists("admins.json"):
-            with open("admins.json", "r") as f:
-                data = json.load(f)
-                extra_admins = set(data.get("admins", []))
+        docs = admins_collection.find({})
+        for doc in docs:
+            if "user_id" in doc:
+                extra_admins.add(int(doc["user_id"]))
+        logger.info(f"Loaded {len(extra_admins)} extra admins from MongoDB.")
     except Exception as e:
-        logger.error(f"Error loading extra admins: {e}")
-
-
-def save_extra_admins():
-    """Save extra admin IDs to admins.json."""
-    try:
-        with open("admins.json", "w") as f:
-            json.dump({"admins": list(extra_admins)}, f)
-    except Exception as e:
-        logger.error(f"Error saving extra admins: {e}")
+        logger.error(f"Error loading extra admins from MongoDB: {e}")
 
 
 load_extra_admins()
@@ -423,9 +427,13 @@ async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if new_admin == ADMIN_ID or new_admin in extra_admins:
         await update.message.reply_text("User is already an admin.")
         return
-    extra_admins.add(new_admin)
-    save_extra_admins()
-    await update.message.reply_text(f"✅ User ID `{new_admin}` has been granted admin access.", parse_mode='Markdown')
+    try:
+        if admins_collection is not None:
+            admins_collection.insert_one({"user_id": new_admin})
+        extra_admins.add(new_admin)
+        await update.message.reply_text(f"✅ User ID `{new_admin}` has been granted admin access.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error adding admin to database: {e}")
 
 
 async def deladmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -443,9 +451,13 @@ async def deladmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if del_admin not in extra_admins:
         await update.message.reply_text("User is not currently an extra admin.")
         return
-    extra_admins.remove(del_admin)
-    save_extra_admins()
-    await update.message.reply_text(f"🔴 User ID `{del_admin}`'s admin access has been revoked.", parse_mode='Markdown')
+    try:
+        if admins_collection is not None:
+            admins_collection.delete_one({"user_id": del_admin})
+        extra_admins.remove(del_admin)
+        await update.message.reply_text(f"🔴 User ID `{del_admin}`'s admin access has been revoked.", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error removing admin from database: {e}")
 
 
 async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
