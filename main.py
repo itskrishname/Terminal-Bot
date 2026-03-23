@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-import speedtest
+try:
+    import speedtest
+    HAS_SPEEDTEST = True
+except ImportError:
+    HAS_SPEEDTEST = False
 import zipfile
 import time
 import asyncio
@@ -40,7 +44,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -189,6 +193,10 @@ async def speedtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /speedtest command to test server network speed."""
     if not is_admin(update):
         return
+    if not HAS_SPEEDTEST:
+        await update.message.reply_text("❌ The `speedtest-cli` module is not installed on this server.\nPlease run: `/run pip install speedtest-cli`", parse_mode='Markdown')
+        return
+
     status_msg = await update.message.reply_text("🚀 Testing Server Internet Speed (This may take a minute)...\n\n1️⃣ Testing Ping...", parse_mode='Markdown')
     try:
         def run_test():
