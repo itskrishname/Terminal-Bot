@@ -15,6 +15,7 @@ import logging
 import shutil
 import platform
 import socket
+import pty
 import urllib.request
 import datetime
 from pymongo import MongoClient
@@ -44,7 +45,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -293,18 +294,17 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        # Prefix with stdbuf -oL -eL to force line buffering for most standard commands
-        buffered_command = f"stdbuf -oL -eL {command}"
+        master_fd, slave_fd = pty.openpty()
         current_process = subprocess.Popen(
-            buffered_command,
+            command,
             shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout for live reading
-            text=True,
-            bufsize=1,  # Line buffered
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
             cwd=current_dir,
             preexec_fn=os.setsid  # Allow killing process group
         )
+        os.close(slave_fd)  # Close child fd in parent
 
         message = await update.message.reply_text(f"🚀 Started background process (PID: {current_process.pid})\nLoading...")
 
@@ -314,19 +314,20 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             last_update_time = time.time()
             loop = asyncio.get_running_loop()
 
-            # Read stdout line by line without blocking the event loop
-            def readline():
-                return current_process.stdout.readline()
+            def read_pty():
+                try:
+                    return os.read(master_fd, 1024).decode('utf-8', errors='replace')
+                except OSError:
+                    return ""
 
             while True:
-                line = await loop.run_in_executor(None, readline)
-                if not line and current_process.poll() is not None:
+                chunk = await loop.run_in_executor(None, read_pty)
+                if not chunk and current_process.poll() is not None:
                     break
-                if line:
-                    output_buffer += line
+                if chunk:
+                    output_buffer += chunk
                     current_time = time.time()
 
-                    # Update message every 3 seconds to avoid rate limit
                     if current_time - last_update_time >= 3.0:
                         last_update_time = current_time
                         display_text = output_buffer
@@ -337,7 +338,7 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         except Exception as e:
                             logger.error(f"Failed to edit live message: {e}")
 
-            # Final update once the process completes
+            os.close(master_fd)
             display_text = output_buffer
             if len(display_text) > 4000:
                 display_text = display_text[-4000:]
@@ -352,7 +353,6 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             current_process = None
 
-        # Start reading the output in the background so the bot remains responsive
         asyncio.create_task(read_output())
 
     except Exception as e:
@@ -753,17 +753,17 @@ async def execute_shell_command(update: Update, command: str):
         await update.message.reply_text(f"*(Alias expanded: `{command}`)*", parse_mode='Markdown')
 
     try:
-        buffered_command = f"stdbuf -oL -eL {command}"
+        master_fd, slave_fd = pty.openpty()
         current_process = subprocess.Popen(
-            buffered_command,
+            command,
             shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1,
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=slave_fd,
             cwd=current_dir,
             preexec_fn=os.setsid
         )
+        os.close(slave_fd)
 
         message = await update.message.reply_text(f"⏳ Executing: `{command}`\nLoading...", parse_mode='Markdown')
 
@@ -772,14 +772,18 @@ async def execute_shell_command(update: Update, command: str):
         start_time = time.time()
         loop = asyncio.get_running_loop()
 
-        def readline():
-            return current_process.stdout.readline()
+        def read_pty():
+            try:
+                return os.read(master_fd, 1024).decode('utf-8', errors='replace')
+            except OSError:
+                return ""
 
         while True:
             # Check for timeout (60 seconds)
             if time.time() - start_time > 60:
                 import signal
                 os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
+                os.close(master_fd)
                 display_text = output_buffer
                 if len(display_text) > 4000:
                     display_text = display_text[-4000:]
@@ -790,14 +794,13 @@ async def execute_shell_command(update: Update, command: str):
                 current_process = None
                 return
 
-            # Read line asynchronously
-            line = await loop.run_in_executor(None, readline)
+            chunk = await loop.run_in_executor(None, read_pty)
 
-            if not line and current_process.poll() is not None:
+            if not chunk and current_process.poll() is not None:
                 break
 
-            if line:
-                output_buffer += line
+            if chunk:
+                output_buffer += chunk
                 current_time = time.time()
 
                 # Update every 3 seconds
@@ -810,6 +813,8 @@ async def execute_shell_command(update: Update, command: str):
                         await message.edit_text(f"⏳ Executing (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
                     except Exception as e:
                         logger.error(f"Failed to edit live message: {e}")
+
+        os.close(master_fd)
 
         # Final update
         display_text = output_buffer
