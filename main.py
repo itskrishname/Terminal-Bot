@@ -45,7 +45,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -540,6 +540,16 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await message.reply_text("Unsupported file type. Please reply to a document (.zip, .txt, etc), photo, video, or audio file.")
         return
+
+    # Check if the user provided a custom name in the command
+    args = context.args
+    if args:
+        # Use custom name provided by user
+        file_name = " ".join(args)
+    else:
+        # User just typed /upload. If the original filename ends with .zip, strip it.
+        if file_name.lower().endswith(".zip"):
+            file_name = file_name[:-4]
 
     status_msg = await message.reply_text(f"Downloading `{file_name}` from Telegram...", parse_mode='Markdown')
     try:
