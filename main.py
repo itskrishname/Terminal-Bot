@@ -45,7 +45,7 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
@@ -59,9 +59,12 @@ scheduled_tasks = {}
 task_counter = 1
 # MongoDB Setup
 MONGO_URI = os.getenv(
-    "MONGO_URI", "mongodb+srv://raj:krishna@cluster0.eq8xrjs.mongodb.net/")
+    "MONGO_URI", "mongodb+srv://raj:krishna@cluster0.eq8xrjs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 try:
-    mongo_client = MongoClient(MONGO_URI)
+    # 5 second timeout to prevent the bot from hanging forever if IP is not whitelisted
+    mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    # Test connection quickly to trigger error if auth or IP is blocked
+    mongo_client.admin.command('ping')
     db = mongo_client["terminal_bot"]
     admins_collection = db["admins"]
 except Exception as e:
@@ -393,16 +396,22 @@ async def update_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """Handle /update command to pull latest code from Git and restart."""
     if not is_admin(update):
         return
-    status_msg = await update.message.reply_text("🔄 Pulling latest updates from GitHub...", parse_mode='Markdown')
+    status_msg = await update.message.reply_text("🔄 Force-pulling latest updates from GitHub...", parse_mode='Markdown')
     try:
+        # Fetch the latest updates
+        subprocess.run(["git", "fetch", "--all"],
+                       capture_output=True, text=True, timeout=15)
+        # Force hard reset to overwrite any local file changes
         result = subprocess.run(
-            ["git", "pull"], capture_output=True, text=True, timeout=15)
+            ["git", "reset", "--hard", "@{u}"], capture_output=True, text=True, timeout=15)
         output = result.stdout + result.stderr
 
-        if "Already up to date." in output:
+        if "is up to date" in output or "Already up to date." in output:
             await status_msg.edit_text("✅ Bot is already up to date.")
         else:
-            await status_msg.edit_text(f"✅ Updates Pulled:\n```\n{output}\n```\nRestarting bot to apply changes...", parse_mode='Markdown')
+            if len(output) > 3000:
+                output = output[:3000] + "\n[Truncated]"
+            await status_msg.edit_text(f"✅ Updates Force-Pulled:\n```\n{output}\n```\nRestarting bot to apply changes...", parse_mode='Markdown')
             # Wait a tiny bit so the message sends, then restart
             await asyncio.sleep(1)
             os.execv(sys.executable, ['python3'] + sys.argv)
@@ -474,6 +483,9 @@ async def addadmin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if admins_collection is not None:
             admins_collection.insert_one({"user_id": new_admin})
+        else:
+            await update.message.reply_text("⚠️ Warning: MongoDB is not connected. Admin added to memory only (will be lost on restart).")
+
         extra_admins.add(new_admin)
         await update.message.reply_text(f"✅ User ID `{new_admin}` has been granted admin access.", parse_mode='Markdown')
     except Exception as e:
