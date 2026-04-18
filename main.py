@@ -1019,9 +1019,7 @@ async def unschedule_command(
             return
         msg = "⏱️ **Active Scheduled Tasks:**\n\n"
         for t_id, t_info in scheduled_tasks.items():
-            msg += f"**ID {t_id}**: `{
-                t_info['command']}` (Interval: {
-                t_info['interval']}s)\n"
+            msg += f"**ID {t_id}**: `{t_info['command']}` (Interval: {t_info['interval']}s)\n"
         msg += "\nTo stop a task, use `/unschedule <id>`"
         await update.message.reply_text(msg, parse_mode='Markdown')
         return
