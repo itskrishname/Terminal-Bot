@@ -567,19 +567,13 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_name = reply_msg.document.file_name or "uploaded_file.bin"
     elif reply_msg.audio:
         file_id = reply_msg.audio.file_id
-        file_name = reply_msg.audio.file_name or f"uploaded_audio_{
-            int(
-                time.time())}.mp3"
+        file_name = reply_msg.audio.file_name or f"uploaded_audio_{int(time.time())}.mp3"
     elif reply_msg.video:
         file_id = reply_msg.video.file_id
-        file_name = reply_msg.video.file_name or f"uploaded_video_{
-            int(
-                time.time())}.mp4"
+        file_name = reply_msg.video.file_name or f"uploaded_video_{int(time.time())}.mp4"
     elif reply_msg.animation:
         file_id = reply_msg.animation.file_id
-        file_name = reply_msg.animation.file_name or f"uploaded_animation_{
-            int(
-                time.time())}.mp4"
+        file_name = reply_msg.animation.file_name or f"uploaded_animation_{int(time.time())}.mp4"
     elif reply_msg.voice:
         file_id = reply_msg.voice.file_id
         file_name = f"uploaded_voice_{int(time.time())}.ogg"
