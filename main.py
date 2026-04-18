@@ -18,11 +18,13 @@ import socket
 import pty
 import urllib.request
 import datetime
+import re
 from pymongo import MongoClient
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
     CommandHandler,
+    CallbackQueryHandler,
     MessageHandler,
     filters,
     ContextTypes,
@@ -45,11 +47,15 @@ try:
 except ImportError:
     pass
 
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
+BOT_TOKEN = os.getenv(
+    "BOT_TOKEN",
+    "8701460956:AAFuXdXSr46z_2CeFexRlVZS1LQ3NUsmiyw")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "7660990923"))
 
 # Global variable to store the currently running process (for /kill)
 current_process = None
+# Global variable to store the active master file descriptor for inputs
+current_master_fd = None
 # Global variable for interactive mode
 interactive_mode = False
 # Dictionary to store custom aliases
@@ -59,9 +65,11 @@ scheduled_tasks = {}
 task_counter = 1
 # MongoDB Setup
 MONGO_URI = os.getenv(
-    "MONGO_URI", "mongodb+srv://raj:krishna@cluster0.eq8xrjs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+    "MONGO_URI",
+    "mongodb+srv://raj:krishna@cluster0.eq8xrjs.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 try:
-    # 5 second timeout to prevent the bot from hanging forever if IP is not whitelisted
+    # 5 second timeout to prevent the bot from hanging forever if IP is not
+    # whitelisted
     mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     # Test connection quickly to trigger error if auth or IP is blocked
     mongo_client.admin.command('ping')
@@ -193,7 +201,9 @@ async def sysinfo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error getting sysinfo: {str(e)}")
 
 
-async def speedtest_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def speedtest_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle /speedtest command to test server network speed."""
     if not is_admin(update):
         return
@@ -284,7 +294,7 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /bg command to execute long-running shell commands with live updates."""
     if not is_admin(update):
         return
-    global current_process
+    global current_process, current_master_fd
 
     # Prevent running multiple bg commands at once to avoid confusion
     if current_process is not None and current_process.poll() is None:
@@ -298,6 +308,7 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         master_fd, slave_fd = pty.openpty()
+        current_master_fd = master_fd
         current_process = subprocess.Popen(
             command,
             shell=True,
@@ -312,14 +323,16 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message = await update.message.reply_text(f"🚀 Started background process (PID: {current_process.pid})\nLoading...")
 
         async def read_output():
-            global current_process
+            global current_process, current_master_fd
             output_buffer = ""
             last_update_time = time.time()
             loop = asyncio.get_running_loop()
 
             def read_pty():
                 try:
-                    return os.read(master_fd, 1024).decode('utf-8', errors='replace')
+                    return os.read(
+                        master_fd, 1024).decode(
+                        'utf-8', errors='replace')
                 except OSError:
                     return ""
 
@@ -331,13 +344,26 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     output_buffer += chunk
                     current_time = time.time()
 
-                    if current_time - last_update_time >= 3.0:
+                    has_prompt = re.search(
+                        r'\[y/n\]', output_buffer[-100:], re.IGNORECASE)
+
+                    if current_time - last_update_time >= 3.0 or has_prompt:
                         last_update_time = current_time
                         display_text = output_buffer
                         if len(display_text) > 4000:
                             display_text = display_text[-4000:]
+
+                        reply_markup = None
+                        if has_prompt:
+                            keyboard = [
+                                [
+                                    InlineKeyboardButton(
+                                        "Yes", callback_data='reply_y'), InlineKeyboardButton(
+                                        "No", callback_data='reply_n')]]
+                            reply_markup = InlineKeyboardMarkup(keyboard)
+
                         try:
-                            await message.edit_text(f"⏳ Process Running (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
+                            await message.edit_text(f"⏳ Process Running (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown', reply_markup=reply_markup)
                         except Exception as e:
                             logger.error(f"Failed to edit live message: {e}")
 
@@ -355,11 +381,13 @@ async def bg_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"Failed to edit final message: {e}")
 
             current_process = None
+            current_master_fd = None
 
         asyncio.create_task(read_output())
 
     except Exception as e:
         current_process = None
+        current_master_fd = None
         await update.message.reply_text(f"Error executing background command: {str(e)}")
 
 
@@ -375,7 +403,8 @@ async def kill_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         import signal
         os.killpg(os.getpgid(current_process.pid), signal.SIGTERM)
-        # Give it a tiny bit to actually die, the read loop will handle nullifying current_process
+        # Give it a tiny bit to actually die, the read loop will handle
+        # nullifying current_process
         await update.message.reply_text(f"The running process (PID: {current_process.pid}) has been sent the kill signal.")
     except Exception as e:
         await update.message.reply_text(f"Error terminating process: {str(e)}")
@@ -392,7 +421,9 @@ async def restart_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Error restarting bot: {str(e)}")
 
 
-async def update_bot_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def update_bot_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Handle /update command to pull latest code from Git and restart."""
     if not is_admin(update):
         return
@@ -536,13 +567,19 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_name = reply_msg.document.file_name or "uploaded_file.bin"
     elif reply_msg.audio:
         file_id = reply_msg.audio.file_id
-        file_name = reply_msg.audio.file_name or f"uploaded_audio_{int(time.time())}.mp3"
+        file_name = reply_msg.audio.file_name or f"uploaded_audio_{
+            int(
+                time.time())}.mp3"
     elif reply_msg.video:
         file_id = reply_msg.video.file_id
-        file_name = reply_msg.video.file_name or f"uploaded_video_{int(time.time())}.mp4"
+        file_name = reply_msg.video.file_name or f"uploaded_video_{
+            int(
+                time.time())}.mp4"
     elif reply_msg.animation:
         file_id = reply_msg.animation.file_id
-        file_name = reply_msg.animation.file_name or f"uploaded_animation_{int(time.time())}.mp4"
+        file_name = reply_msg.animation.file_name or f"uploaded_animation_{
+            int(
+                time.time())}.mp4"
     elif reply_msg.voice:
         file_id = reply_msg.voice.file_id
         file_name = f"uploaded_voice_{int(time.time())}.ogg"
@@ -559,7 +596,8 @@ async def upload_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Use custom name provided by user
         file_name = " ".join(args)
     else:
-        # User just typed /upload. If the original filename ends with .zip, strip it.
+        # User just typed /upload. If the original filename ends with .zip,
+        # strip it.
         if file_name.lower().endswith(".zip"):
             file_name = file_name[:-4]
 
@@ -606,7 +644,8 @@ async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         with open(send_path, "rb") as f:
-            # Tell telegram to treat it as a document (works for zip, txt, bin, etc)
+            # Tell telegram to treat it as a document (works for zip, txt, bin,
+            # etc)
             await context.bot.send_document(chat_id=update.effective_chat.id, document=f, filename=file_name)
         await status_msg.edit_text(f"✅ Successfully sent: `{file_name}`", parse_mode='Markdown')
 
@@ -741,7 +780,9 @@ async def admins_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 
-async def interactive_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def interactive_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Toggle interactive shell mode on."""
     if not is_admin(update):
         return
@@ -761,7 +802,7 @@ async def exit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def execute_shell_command(update: Update, command: str):
     """Helper function to execute a shell command with live updates and a 60s timeout."""
-    global current_process
+    global current_process, current_master_fd
 
     # Prevent running multiple commands at once to avoid confusion
     if current_process is not None and current_process.poll() is None:
@@ -776,6 +817,7 @@ async def execute_shell_command(update: Update, command: str):
 
     try:
         master_fd, slave_fd = pty.openpty()
+        current_master_fd = master_fd
         current_process = subprocess.Popen(
             command,
             shell=True,
@@ -796,7 +838,11 @@ async def execute_shell_command(update: Update, command: str):
 
         def read_pty():
             try:
-                return os.read(master_fd, 1024).decode('utf-8', errors='replace')
+                return os.read(
+                    master_fd,
+                    1024).decode(
+                    'utf-8',
+                    errors='replace')
             except OSError:
                 return ""
 
@@ -814,6 +860,7 @@ async def execute_shell_command(update: Update, command: str):
                 except Exception:
                     pass
                 current_process = None
+                current_master_fd = None
                 return
 
             chunk = await loop.run_in_executor(None, read_pty)
@@ -825,14 +872,27 @@ async def execute_shell_command(update: Update, command: str):
                 output_buffer += chunk
                 current_time = time.time()
 
-                # Update every 3 seconds
-                if current_time - last_update_time >= 3.0:
+                has_prompt = re.search(
+                    r'\[y/n\]', output_buffer[-100:], re.IGNORECASE)
+
+                # Update every 3 seconds or if there's a prompt
+                if current_time - last_update_time >= 3.0 or has_prompt:
                     last_update_time = current_time
                     display_text = output_buffer
                     if len(display_text) > 4000:
                         display_text = display_text[-4000:]
+
+                    reply_markup = None
+                    if has_prompt:
+                        keyboard = [
+                            [
+                                InlineKeyboardButton(
+                                    "Yes", callback_data='reply_y'), InlineKeyboardButton(
+                                    "No", callback_data='reply_n')]]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+
                     try:
-                        await message.edit_text(f"⏳ Executing (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown')
+                        await message.edit_text(f"⏳ Executing (PID: {current_process.pid})\n\n```\n{display_text}\n```", parse_mode='Markdown', reply_markup=reply_markup)
                     except Exception as e:
                         logger.error(f"Failed to edit live message: {e}")
 
@@ -852,9 +912,11 @@ async def execute_shell_command(update: Update, command: str):
             logger.error(f"Failed to edit final message: {e}")
 
         current_process = None
+        current_master_fd = None
 
     except Exception as e:
         current_process = None
+        current_master_fd = None
         await update.message.reply_text(f"Error executing command: {str(e)}")
 
 
@@ -896,7 +958,8 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     task_counter += 1
 
     async def scheduled_job():
-        # Let's wait first or execute immediately? Let's execute immediately then wait.
+        # Let's wait first or execute immediately? Let's execute immediately
+        # then wait.
         while task_id in scheduled_tasks:
             # We will use the execute_shell_command function, but we need to pass a context
             # We just send a message to the user independently.
@@ -949,7 +1012,9 @@ async def schedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"✅ **Task Scheduled** (ID: `{task_id}`)\nCommand `{command}` will run every `{args[0]}`.", parse_mode='Markdown')
 
 
-async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def unschedule_command(
+        update: Update,
+        context: ContextTypes.DEFAULT_TYPE):
     """Stop a scheduled task."""
     if not is_admin(update):
         return
@@ -960,7 +1025,9 @@ async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             return
         msg = "⏱️ **Active Scheduled Tasks:**\n\n"
         for t_id, t_info in scheduled_tasks.items():
-            msg += f"**ID {t_id}**: `{t_info['command']}` (Interval: {t_info['interval']}s)\n"
+            msg += f"**ID {t_id}**: `{
+                t_info['command']}` (Interval: {
+                t_info['interval']}s)\n"
         msg += "\nTo stop a task, use `/unschedule <id>`"
         await update.message.reply_text(msg, parse_mode='Markdown')
         return
@@ -975,6 +1042,62 @@ async def unschedule_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
             await update.message.reply_text(f"❌ Task ID `{task_id}` not found.")
     except ValueError:
         await update.message.reply_text("Please provide a valid numeric Task ID.")
+
+
+async def reply_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /r command to send input to the running process."""
+    if not is_admin(update):
+        return
+
+    if current_master_fd is None:
+        await update.message.reply_text("No active interactive process to reply to.")
+        return
+
+    # Extract the input text after /r
+    input_text = " ".join(context.args).strip()
+    if not input_text:
+        await update.message.reply_text("Please provide input. Usage: `/r <text>`", parse_mode='Markdown')
+        return
+
+    try:
+        os.write(current_master_fd, (input_text + "\n").encode('utf-8'))
+        await update.message.reply_text(f"✅ Sent input: `{input_text}`", parse_mode='Markdown')
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error sending input: {str(e)}")
+
+
+async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline button presses for interactive prompts."""
+    query = update.callback_query
+    # We use a simple check; update.effective_user.id provides the user's ID
+    user_id = query.from_user.id
+    if user_id != ADMIN_ID and user_id not in extra_admins:
+        await query.answer("You are not authorized.", show_alert=True)
+        return
+
+    await query.answer()
+
+    if current_master_fd is None:
+        try:
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+        return
+
+    data = query.data
+    input_text = ""
+    if data == 'reply_y':
+        input_text = "y"
+    elif data == 'reply_n':
+        input_text = "n"
+
+    if input_text:
+        try:
+            os.write(current_master_fd, (input_text + "\n").encode('utf-8'))
+            # Remove the buttons after selection
+            await query.edit_message_reply_markup(reply_markup=None)
+        except Exception as e:
+            logger.error(f"Error sending button input: {e}")
 
 
 async def run_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1003,6 +1126,7 @@ def main():
             BotCommand("cd", "Change directory (e.g., /cd <path>)"),
             BotCommand("home", "Go to home directory"),
             BotCommand("run", "Run a shell command (e.g., /run ls)"),
+            BotCommand("r", "Reply to an interactive prompt (e.g., /r y)"),
             BotCommand("bg", "Run a command in background (e.g., /bg top)"),
             BotCommand("kill", "Kill the currently running process"),
             BotCommand("stats", "Show system CPU, RAM, and Disk usage"),
@@ -1052,6 +1176,7 @@ def main():
     application.add_handler(CommandHandler("txt", txt_command))
     application.add_handler(CommandHandler("logs", logs_command))
     application.add_handler(CommandHandler("run", run_command))
+    application.add_handler(CommandHandler("r", reply_command))
     application.add_handler(CommandHandler("bg", bg_command))
     application.add_handler(CommandHandler("kill", kill_command))
     application.add_handler(CommandHandler("restart", restart_command))
@@ -1060,9 +1185,15 @@ def main():
     application.add_handler(CommandHandler("exit", exit_command))
     application.add_handler(CommandHandler("alias", alias_command))
     application.add_handler(CommandHandler("aliases", aliases_command))
+    application.add_handler(
+        CallbackQueryHandler(
+            button_callback,
+            pattern='^reply_'))
 
     # Message handler for interactive mode or fallback warning
-    async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def unknown_command(
+            update: Update,
+            context: ContextTypes.DEFAULT_TYPE):
         if is_admin(update):
             if interactive_mode:
                 command = update.message.text.strip()
